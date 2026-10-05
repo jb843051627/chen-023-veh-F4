@@ -67,8 +67,14 @@ CREATE TABLE IF NOT EXISTS t_veh_due_task (
   id bigint NOT NULL COMMENT '主键',
   item_no varchar(64) DEFAULT NULL COMMENT '证照到期催办条目代号',
   due_at datetime DEFAULT NULL COMMENT '应开口那一日的止点时刻',
-  amount decimal(12,2) DEFAULT NULL COMMENT '最可提前几日开口',
+  amount decimal(12,2) DEFAULT NULL COMMENT '最可提前几日开口（只数办事日，假与停办不凑）',
   content varchar(255) DEFAULT NULL COMMENT '事由与所对业户的记要',
+  site_no varchar(64) DEFAULT NULL COMMENT '所对业户代号（对总名录 t_veh_ent.site_no）',
+  contact varchar(128) DEFAULT NULL COMMENT '联络人（空着几季没人补的直接记分不出）',
+  handler_no varchar(64) DEFAULT NULL COMMENT '经办人代号（派出去那一刻钉上）',
+  dispatched_at datetime DEFAULT NULL COMMENT '派出去那一刻（与翻成已派出同一回落上，两边缺一不算办完）',
+  fail_stage varchar(32) DEFAULT NULL COMMENT '分不出卡在哪一环 校格/销户/无联络人/派人/回写',
+  fail_reason varchar(500) DEFAULT NULL COMMENT '分不出缘由（日后照缘由把这一批捞出来重排）',
   status int DEFAULT NULL COMMENT '条目情形 0待派 1已派出 2分不出',
   del_flag int DEFAULT '0' COMMENT '删除标记 0正常 1删除',
   create_by varchar(64) DEFAULT NULL COMMENT '创建者',
@@ -76,8 +82,44 @@ CREATE TABLE IF NOT EXISTS t_veh_due_task (
   update_by varchar(64) DEFAULT NULL COMMENT '更新者',
   update_time datetime DEFAULT NULL COMMENT '更新时间',
   remark varchar(500) DEFAULT NULL COMMENT '备注',
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  KEY idx_due_task_status (status, del_flag),
+  KEY idx_due_task_due (due_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='证照到期催办条目';
+
+CREATE TABLE IF NOT EXISTS t_veh_due_handler (
+  id bigint NOT NULL COMMENT '主键',
+  handler_no varchar(64) DEFAULT NULL COMMENT '经办人代号',
+  handler_name varchar(128) DEFAULT NULL COMMENT '经办人姓名',
+  leave_flag int DEFAULT '0' COMMENT '这一季休办 0在岗 1休办（休办这趟顺延）',
+  quota int DEFAULT NULL COMMENT '这一季手上定额（塞满的桩当场记分不出，空着按不设顶认）',
+  active_count int DEFAULT '0' COMMENT '这一季手上已接着的活（派一桩加一，同一业户名下不并给同一人）',
+  accept_types varchar(500) DEFAULT NULL COMMENT '接得过来的业户类别（字典序逗号隔开；空着=哪类都接）',
+  status int DEFAULT '0' COMMENT '经办人情形 0可用 1停用',
+  del_flag int DEFAULT '0' COMMENT '删除标记 0正常 1删除',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  update_by varchar(64) DEFAULT NULL COMMENT '更新者',
+  update_time datetime DEFAULT NULL COMMENT '更新时间',
+  remark varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_due_handler_no (handler_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='催办经办人花名册（每季更新手头活/休办/定额）';
+
+CREATE TABLE IF NOT EXISTS t_veh_due_offday (
+  id bigint NOT NULL COMMENT '主键',
+  day date NOT NULL COMMENT '不办事的日子（国家放假、省里下文停办，都在这一本上）',
+  day_kind int DEFAULT NULL COMMENT '来路 0国家放假 1省里停办',
+  day_name varchar(128) DEFAULT NULL COMMENT '名目（哪个节、哪份文）',
+  del_flag int DEFAULT '0' COMMENT '删除标记 0正常 1删除',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  update_by varchar(64) DEFAULT NULL COMMENT '更新者',
+  update_time datetime DEFAULT NULL COMMENT '更新时间',
+  remark varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_due_offday_day (day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='催办办事日历（数日子跳过此本上的日，不另定周末）';
 
 CREATE TABLE IF NOT EXISTS t_veh_ent (
   id bigint NOT NULL COMMENT '主键',
@@ -186,4 +228,15 @@ VALUES (0, 'YH00', '宁州顺达客运有限公司（道路旅客运输业户，
 -- ALTER TABLE t_veh_bind_page ADD KEY idx_veh_bind_sign_no (sign_no);
 -- ALTER TABLE t_veh_bind_page ADD KEY idx_veh_bind_veh_code (veh_code);
 -- ALTER TABLE t_veh_bind_page ADD KEY idx_veh_bind_node (node_no, del_flag);
+
+-- 旧库补列（t_veh_due_task 承接新派批次名目时逐条执行；新库由上面的 CREATE TABLE 带出，勿重复执行）：
+-- ALTER TABLE t_veh_due_task ADD COLUMN site_no varchar(64) DEFAULT NULL COMMENT '所对业户代号' AFTER content;
+-- ALTER TABLE t_veh_due_task ADD COLUMN contact varchar(128) DEFAULT NULL COMMENT '联络人' AFTER site_no;
+-- ALTER TABLE t_veh_due_task ADD COLUMN handler_no varchar(64) DEFAULT NULL COMMENT '经办人代号' AFTER contact;
+-- ALTER TABLE t_veh_due_task ADD COLUMN dispatched_at datetime DEFAULT NULL COMMENT '派出去那一刻' AFTER handler_no;
+-- ALTER TABLE t_veh_due_task ADD COLUMN fail_stage varchar(32) DEFAULT NULL COMMENT '分不出卡在哪一环' AFTER dispatched_at;
+-- ALTER TABLE t_veh_due_task ADD COLUMN fail_reason varchar(500) DEFAULT NULL COMMENT '分不出缘由' AFTER fail_stage;
+-- ALTER TABLE t_veh_due_task ADD KEY idx_due_task_status (status, del_flag);
+-- ALTER TABLE t_veh_due_task ADD KEY idx_due_task_due (due_at);
+-- 新派批次另起两本：t_veh_due_handler（经办人花名册）、t_veh_due_offday（办事日历），见上方 CREATE TABLE。
 

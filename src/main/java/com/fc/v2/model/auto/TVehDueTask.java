@@ -53,6 +53,37 @@ public class TVehDueTask implements Serializable {
     @ApiModelProperty(value = "事由与所对业户的记要")
     private String content;
 
+    /** 所对业户代号（对总名录 t_veh_ent.site_no） */
+    @TableField("site_no")
+    @ApiModelProperty(value = "所对业户代号")
+    private String siteNo;
+
+    /** 联络人（空着几季没人补的直接记分不出） */
+    @TableField("contact")
+    @ApiModelProperty(value = "联络人")
+    private String contact;
+
+    /** 经办人代号（派出去那一刻钉上） */
+    @TableField("handler_no")
+    @ApiModelProperty(value = "经办人代号")
+    private String handlerNo;
+
+    /** 派出去那一刻（与翻成已派出同一回落上） */
+    @TableField("dispatched_at")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
+    @ApiModelProperty(value = "派出去那一刻")
+    private Date dispatchedAt;
+
+    /** 分不出卡在哪一环 校格/销户/无联络人/派人/回写 */
+    @TableField("fail_stage")
+    @ApiModelProperty(value = "分不出卡在哪一环")
+    private String failStage;
+
+    /** 分不出缘由（日后照缘由把这一批捞出来重排） */
+    @TableField("fail_reason")
+    @ApiModelProperty(value = "分不出缘由")
+    private String failReason;
+
     /** 条目情形 0待派 1已派出 2分不出 */
     @TableField("status")
     @ApiModelProperty(value = "条目情形 0待派 1已派出 2分不出")
@@ -128,6 +159,54 @@ public class TVehDueTask implements Serializable {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public String getSiteNo() {
+        return siteNo;
+    }
+
+    public void setSiteNo(String siteNo) {
+        this.siteNo = siteNo;
+    }
+
+    public String getContact() {
+        return contact;
+    }
+
+    public void setContact(String contact) {
+        this.contact = contact;
+    }
+
+    public String getHandlerNo() {
+        return handlerNo;
+    }
+
+    public void setHandlerNo(String handlerNo) {
+        this.handlerNo = handlerNo;
+    }
+
+    public Date getDispatchedAt() {
+        return dispatchedAt;
+    }
+
+    public void setDispatchedAt(Date dispatchedAt) {
+        this.dispatchedAt = dispatchedAt;
+    }
+
+    public String getFailStage() {
+        return failStage;
+    }
+
+    public void setFailStage(String failStage) {
+        this.failStage = failStage;
+    }
+
+    public String getFailReason() {
+        return failReason;
+    }
+
+    public void setFailReason(String failReason) {
+        this.failReason = failReason;
     }
 
     public Integer getStatus() {
