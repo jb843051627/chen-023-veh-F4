@@ -53,9 +53,40 @@ public class TVehDueTask implements Serializable {
     @ApiModelProperty(value = "事由与所对业户的记要")
     private String content;
 
-    /** 条目情形 0待派 1已派出 2分不出 */
+    /** 所对业户代号（对 t_veh_ent.site_no） */
+    @TableField("site_no")
+    @ApiModelProperty(value = "所对业户代号")
+    private String siteNo;
+
+    /** 联络人（空着几季没人补的直接判分不出） */
+    @TableField("contact")
+    @ApiModelProperty(value = "联络人")
+    private String contact;
+
+    /** 递到谁名下（经办人代号，派出时钉上） */
+    @TableField("assignee_no")
+    @ApiModelProperty(value = "递到谁名下")
+    private String assigneeNo;
+
+    /** 递出去那一刻（与状态翻转同进同退，缺一不算办过） */
+    @TableField("dispatched_at")
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
+    @ApiModelProperty(value = "递出去那一刻")
+    private Date dispatchedAt;
+
+    /** 分不出时卡在哪一环 */
+    @TableField("block_stage")
+    @ApiModelProperty(value = "分不出时卡在哪一环")
+    private String blockStage;
+
+    /** 分不出缘由（日后照缘由把这一批捞出来重排） */
+    @TableField("block_reason")
+    @ApiModelProperty(value = "分不出缘由")
+    private String blockReason;
+
+    /** 条目情形 0搁着(待派) 1递出去了(已派出) 2递不动(分不出) */
     @TableField("status")
-    @ApiModelProperty(value = "条目情形 0待派 1已派出 2分不出")
+    @ApiModelProperty(value = "条目情形 0搁着 1递出去了 2递不动")
     private Integer status;
 
     /** 删除标记 0正常 1删除 */
@@ -128,6 +159,54 @@ public class TVehDueTask implements Serializable {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public String getSiteNo() {
+        return siteNo;
+    }
+
+    public void setSiteNo(String siteNo) {
+        this.siteNo = siteNo;
+    }
+
+    public String getContact() {
+        return contact;
+    }
+
+    public void setContact(String contact) {
+        this.contact = contact;
+    }
+
+    public String getAssigneeNo() {
+        return assigneeNo;
+    }
+
+    public void setAssigneeNo(String assigneeNo) {
+        this.assigneeNo = assigneeNo;
+    }
+
+    public Date getDispatchedAt() {
+        return dispatchedAt;
+    }
+
+    public void setDispatchedAt(Date dispatchedAt) {
+        this.dispatchedAt = dispatchedAt;
+    }
+
+    public String getBlockStage() {
+        return blockStage;
+    }
+
+    public void setBlockStage(String blockStage) {
+        this.blockStage = blockStage;
+    }
+
+    public String getBlockReason() {
+        return blockReason;
+    }
+
+    public void setBlockReason(String blockReason) {
+        this.blockReason = blockReason;
     }
 
     public Integer getStatus() {

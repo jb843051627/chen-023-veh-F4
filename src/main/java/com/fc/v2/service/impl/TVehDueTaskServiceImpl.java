@@ -1,21 +1,28 @@
 package com.fc.v2.service.impl;
 
-import java.util.Calendar;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.springframework.stereotype.Service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fc.v2.mapper.auto.TVehDueTaskMapper;
+import com.fc.v2.mapper.auto.TVehNonworkDayMapper;
 import com.fc.v2.model.auto.TVehDueTask;
+import com.fc.v2.model.auto.TVehNonworkDay;
 import com.fc.v2.service.ITVehDueTaskService;
+import com.fc.v2.service.VehDueRuler;
+import com.fc.v2.service.VehDueWorkdayCalendar;
 
 /**
- * 证照到期催办条目 Service业务层处理（scheduling-job 形状：周期执行）
+ * 证照到期催办条目 Service业务层处理（旧驱动：scheduling-job 形状，照旧只出一个数）
  *
- * 开口窗口只由 {@link #listDue} 一处算：到了"应开口止点"往前最多 amount 日那一时刻就可开口，
- * 逾期照催；{@link #runOnce} 直接照这份名单派，两处不许各筛各的。
+ * 模样不添新东西：仍是 {@link #listDue} 出名单、{@link #runOnce} 照名单派、返回成功条数。
+ * 但"到没到期"那把尺只在 {@link VehDueRuler} 一处：开口点按办事日往回点
+ * （国家放假、省停办不凑数），新批派一趟与这里同用它，两处不许各摆一把。
+ * 旧驱动的兜底口径照旧：amount 空着/带负号按 0（当日开口），存量空状态照待派认。
  *
  * @author fuce
  * @date 2026-09-14
@@ -23,27 +30,16 @@ import com.fc.v2.service.ITVehDueTaskService;
 @Service
 public class TVehDueTaskServiceImpl implements ITVehDueTaskService {
 
-    /** 条目情形：待派（存量空着的也按待派认，两处同一说法） */
-    private static final int STATUS_WAIT = 0;
-    /** 条目情形：已派出 */
-    private static final int STATUS_DONE = 1;
-    /** 条目情形：分不出 */
-    private static final int STATUS_FAIL = 2;
-
     @javax.annotation.Resource
     private TVehDueTaskMapper vehDueTaskMapper;
+
+    /** 不办事日历：新批派与旧驱动同读这一册（无配置时每日都办事，不添新门槛） */
+    @javax.annotation.Resource
+    private TVehNonworkDayMapper vehNonworkDayMapper;
 
     @Override
     public TVehDueTask selectTVehDueTaskById(Long id) {
         return this.vehDueTaskMapper.selectById(id);
-    }
-
-    /**
-     * 时段比较统一走**墙钟字符串**（yyyy-MM-dd HH:mm:ss）：JDBC 的 serverTimezone 与本机
-     * 时区不对称，直接把 java.util.Date 作参数会整体偏移，使"恰好到期"这类边界用例错判。
-     */
-    private static String ts(Date d) {
-        return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(d);
     }
 
     @Override
@@ -53,10 +49,11 @@ public class TVehDueTaskServiceImpl implements ITVehDueTaskService {
             // 问话时刻都没给：还一份空名单作兜底，不许把异常甩给调用方
             return due;
         }
+        VehDueWorkdayCalendar calendar = loadCalendar();
         List<TVehDueTask> all = this.vehDueTaskMapper.selectList(
                 new QueryWrapper<TVehDueTask>().eq("del_flag", 0));
         for (TVehDueTask r : all) {
-            if (isDispatchable(r, at)) {
+            if (isDispatchable(r, at, calendar)) {
                 due.add(r);
             }
         }
@@ -72,7 +69,7 @@ public class TVehDueTaskServiceImpl implements ITVehDueTaskService {
             try {
                 TVehDueTask upd = new TVehDueTask();
                 upd.setId(r.getId());
-                upd.setStatus(STATUS_DONE);
+                upd.setStatus(VehDueRuler.STATUS_DONE);
                 if (this.vehDueTaskMapper.updateById(upd) > 0) {
                     ok++;
                 }
@@ -84,32 +81,39 @@ public class TVehDueTaskServiceImpl implements ITVehDueTaskService {
     }
 
     /**
-     * 一条这一轮派不派得动，只此一处判定，listDue 与 runOnce 都照它：
-     * 未派过、应开口止点不缺、问话时刻已到开口点（止点往前最多 amount 日，含开口那一刻）。
-     * 判据缺一格/念不成的，跳过这一条给兜底，不许抛异常出去。
+     * 一条这一轮派不派得动，只此一处判定，listDue 与 runOnce 都照尺子走：
+     * 未派过、应开口止点不缺、问话时刻已到开口点（止点按办事日往前最多 amount 日，含开口那一刻）。
+     * 旧驱动从宽：amount 空着/负数按 0 兜底；判据缺一格的跳过，不许抛异常出去。
      */
-    private boolean isDispatchable(TVehDueTask r, Date at) {
-        if (r.getStatus() != null && r.getStatus() != STATUS_WAIT) {
-            // 已派出、已分不出的不再派；只有待派（含存量空着）才开口
+    private boolean isDispatchable(TVehDueTask r, Date at, VehDueWorkdayCalendar calendar) {
+        if (!VehDueRuler.isWaiting(r)) {
+            // 已派出、已递不动的不再派；只有搁着（含存量空着）才开口
             return false;
         }
-        Date stop = r.getDueAt();
-        if (stop == null) {
+        if (r.getDueAt() == null) {
             return false;
         }
-        int aheadDays = 0;
-        if (r.getAmount() != null) {
-            // "最可提前几日"不该为负；念成负数的按零兜底（当日开口），不替它抛异常
-            int v = r.getAmount().intValue();
-            if (v > 0) {
-                aheadDays = v;
+        int aheadDays = VehDueRuler.parseAmountLenient(r.getAmount());
+        return VehDueRuler.isOpen(r, at, aheadDays, calendar);
+    }
+
+    /** 读不办事日历：国家放假、省停办那两类整日都剔出办事日 */
+    private VehDueWorkdayCalendar loadCalendar() {
+        Set<String> days = new HashSet<String>();
+        if (vehNonworkDayMapper != null) {
+            try {
+                List<TVehNonworkDay> rows = vehNonworkDayMapper.selectList(
+                        new QueryWrapper<TVehNonworkDay>().eq("del_flag", 0));
+                for (TVehNonworkDay d : rows) {
+                    if (d.getDay() != null) {
+                        days.add(VehDueWorkdayCalendar.dayKey(d.getDay()));
+                    }
+                }
+            } catch (Exception e) {
+                // 日历读不出来不掀翻旧驱动：按每日都办事兜底，与无配置时一致
+                days.clear();
             }
         }
-        Calendar cal = Calendar.getInstance();
-        cal.setTime(stop);
-        cal.add(Calendar.DAY_OF_MONTH, -aheadDays);
-        Date openAt = cal.getTime();
-        // 已到开口点（含那一刻）就可派；过了止点逾期的也照催
-        return ts(at).compareTo(ts(openAt)) >= 0;
+        return new VehDueWorkdayCalendar(days);
     }
 }

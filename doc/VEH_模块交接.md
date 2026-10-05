@@ -55,13 +55,48 @@
 
 ## 4. 证照到期催办（周期任务）
 
-- 表：`t_veh_due_task`；服务 `TVehDueTaskServiceImpl`。
-- `due_at` 应开口止点；`amount` 最可提前几日；`status` 0待派 1已派出 2分不出（存量空状态按待派认）。
-- 开口窗口唯一判定 `isDispatchable`：到 `[due_at - amount 日, …]` 即可派，含开口那一刻，逾期照催；
-  只派未留痕删除、待派的；amount 为负按 0 兜底。
-- `runOnce` 直接照 `listDue` 那份名单派（两处同源），逐条置"已派出"，
-  空名单/时刻缺省返 0（早先空名单取 `get(0)` 崩），单条失败跳过不牵动别条。
-- 时间比较统一走墙钟字符串 `yyyy-MM-dd HH:mm:ss`（避开 JDBC serverTimezone 错位）。
+- 表：`t_veh_due_task`；服务 `TVehDueTaskServiceImpl`（旧驱动）。
+- `due_at` 应开口止点；`amount` 最可提前几日；`status` 0搁着(待派) 1递出去了(已派出) 2递不动(分不出)（存量空状态按搁着认）。
+- **到没到期只有一把尺 `VehDueRuler`（`service/VehDueRuler.java`）**，旧驱动与新批派一趟同用，别处不许另摆：
+  - 开口点 = 止点往回点 `amount` 个**办事日**（不是自然日/24 小时）：一日一日回点，
+    不办事的整日跳过不计数，止点带几点几分开口点还是几点几分（夜里跨的几个钟头不凑整日）；
+  - 不办事日历读 `t_veh_nonwork_day`（`day_kind` 0国家放假 1省里下文停办），经 `VehDueWorkdayCalendar` 逐日剔；
+  - 触发时刻已到开口点（**含开口/止点那一刻，压线算到期**）即开口，逾期照催；
+  - 时刻读法两处一致：挑桩与回写同走墙钟字符串 `yyyy-MM-dd HH:mm:ss`（避开 JDBC serverTimezone 错位）。
+- 旧驱动：开口判定 `isDispatchable` 一处（已改为委托 `VehDueRuler`），`runOnce` 直接照 `listDue`
+  那份名单派（两处同源），逐条置"已派出"，空名单/时刻缺省返 0（早先空名单取 `get(0)` 崩），
+  单条失败跳过不牵动别条。**旧驱动照旧只出一个数、不添新东西、模样不改**；
+  旧驱动从宽：amount 空着/带负号按 0 兜底（`parseAmountLenient`）。
+
+## 4b. 证照到期批派一趟（新名目，一趟只办一批）
+
+- 新表：`t_veh_nonwork_day`（不办事日历）、`t_veh_due_handler`（经办人册，`status` 0在位 1本季休办、
+  `quota` 本季定额）、`t_veh_due_handler_kind`（经办人经得来的业户类别，对 `t_veh_ent.site_type`）；
+  `t_veh_due_task` 加格：`site_no`/`contact`/`assignee_no`/`dispatched_at`/`block_stage`/`block_reason`
+  （旧库补列见 veh.sql 末尾）。
+- 服务 `TVehDueDispatchServiceImpl`，**唯一入口** `POST /vehDueDispatch/dispatch?at=yyyy-MM-dd HH:mm:ss`
+  （at 缺省按问话当下；控制器只递话，不算一个数）。"要一趟只办一批"的活只由这一名目担，不回头改旧驱动。
+- 开口窗口唯一判定 `VehDueRuler.withinWindow`：**[02:00, 05:00)**——两点以前、五点及以后是静默段，
+  按下触发只应声 `windowOpen=false`、三数留空（不是 0），不读册、不动库、行上一格也不改；at 缺省同样不动。
+- 挑桩（与旧驱动同一把尺）：只挑搁着的（`上趟已递出去/递不动不捞回`），行格先过堂：
+  `due_at` 空、`amount` 没数/带负号/大得没边（顶 `MAX_AHEAD_DAYS=3650`）、`item_no` 没落，
+  当场置 2 并把卡环（止点时刻/提前日/条目代号）写回 `block_stage`、缘由写 `block_reason`；
+  **一桩撑不住不掀翻这一趟**，别桩照旧一桩一桩走完。
+- 两类天生递不动（不必等到期、不必空跑）：所对业户在 `t_veh_ent` 已销户(`status=1)`或查无此代号
+  （卡环"业户"）；`contact` 空着/空白（卡环"联络人"）。
+- 截断：挑中多过 `BATCH_CAP=500` 时，按 `due_at` 先来先办、同止点按 `item_no` 字典序，
+  只办头 500，余下留在搁着等下一趟（`leftToNext` 报数、mark 里摆明，不许一口气捞穿整张表）。
+- 递到谁名下（`prepareAssignment`/`Assignment.pick`）：按这一季（季头 `VehDueRuler.quarterStart`）
+  手上活**最少**的先接（季内已派出条数，含本趟占位；平手按代号排，确定性）；
+  本季休办、册里没挂这类业户（经不来）、名下已压着同一 `site_no`（一家业户的几桩不并同一人，
+  跨本趟的季内历史也认）、已塞满定额的，逐位顺延；谁都接不下当场置 2，卡环"派单"、缘由写回行上。
+  名额在**落库成功后**才 commit 占位；该条写库抛错则不占名额、行留在搁着，不牵动别桩。
+- 办过的两边痕迹同进同退：`status` 翻 1 **且** `dispatched_at`=触发那一刻、`assignee_no`=经办人
+  同一回 update；只翻词不钉时刻/经办人的，回库点不算办过。
+- 收口三数（`VehDueDispatchReceipt`：还欠开口/这一趟递出去/标成递不动）**只报这一趟这一回，
+  不并历史**；`recount` 重新回库整册逐条点（按行 id 对本趟、库里确已落成）才出口，
+  不拿挑桩时屏上那一遍凑数。还欠开口 = 收口时仍搁着、行格站得住、尺子说还没到开口点
+  （超顶留下的到期桩不算欠开口）。一条没挑着 mark="这一趟没有到期的"，寻常收口不当事故。
 
 ## 5. 月度报警处置核收册 / 联网清单页（已收口，改动别动其口径）
 
@@ -79,5 +114,6 @@ mvn -o test
 ```
 
 不启 Spring、桩掉 Mapper 的单测在 `src/test/java/com/fc/v2/service/`，
-需求点过名的坑（压线、同一把舍法、历史窗口、说话次序、停用、悬空代号、状态同源、签批过档、催办窗口等）
+需求点过名的坑（压线、同一把舍法、历史窗口、说话次序、停用、悬空代号、状态同源、签批过档、催办窗口、
+批派窗口静默段/办事日剔假/废格卡环/销户空联络人/同户相斥/休办定额顺延/双痕迹/回库现点/五百截断等）
 都有对应用例钉着；改口径先改/加这些用例。
